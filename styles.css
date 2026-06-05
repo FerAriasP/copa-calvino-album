@@ -2,14 +2,22 @@
   box-sizing: border-box;
 }
 
+html,
 body {
-  font-family: Arial, sans-serif;
-  background: #111;
+  width: 100%;
+  min-height: 100%;
   margin: 0;
+  overflow-x: hidden;
+  background: #111;
+  font-family: Arial, sans-serif;
+}
+
+body {
   padding: 16px;
 }
 
 .app {
+  width: 100%;
   max-width: 1300px;
   margin: auto;
 }
@@ -23,13 +31,15 @@ body {
 
 .book-area {
   position: relative;
+  width: 100%;
 }
 
 .book {
+  width: 100%;
   background: #222;
   border-radius: 12px;
   padding: 12px;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .book.turn-next .image-wrap {
@@ -66,13 +76,18 @@ body {
 
 .image-wrap {
   position: relative;
-  width: 100%;
-  margin: auto;
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+  margin: 0 auto;
+  line-height: 0;
 }
 
 .layout-image {
-  width: 100%;
   display: block;
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
   border-radius: 6px;
   user-select: none;
   pointer-events: none;
@@ -109,7 +124,7 @@ body {
   justify-content: center;
   color: white;
   font-weight: bold;
-  font-size: clamp(10px, 3.5vw, 28px);
+  font-size: clamp(10px, 3vw, 26px);
   line-height: 1;
 }
 
@@ -123,43 +138,46 @@ body {
   display: block;
 }
 
+/* SMALL X BUTTON */
 .remove-btn {
-  position: absolute;
-  top: 3px;
-  right: 3px;
-  bottom: auto;
-  left: auto;
-  z-index: 30;
+  position: absolute !important;
+  top: 2px !important;
+  right: 2px !important;
+  left: auto !important;
+  bottom: auto !important;
+  z-index: 40 !important;
 
-  width: 20px;
-  height: 20px;
-  min-width: 20px;
-  min-height: 20px;
-  max-width: 20px;
-  max-height: 20px;
+  width: 13px !important;
+  height: 13px !important;
+  min-width: 13px !important;
+  min-height: 13px !important;
+  max-width: 13px !important;
+  max-height: 13px !important;
 
-  padding: 0;
-  margin: 0;
-  border: none;
-  border-radius: 50%;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+  border-radius: 50% !important;
 
-  background: rgba(0, 0, 0, 0.78);
-  color: white;
+  background: rgba(0, 0, 0, 0.65) !important;
+  color: white !important;
 
-  cursor: pointer;
-  font-size: 0;
-  line-height: 20px;
+  cursor: pointer !important;
+  font-size: 0 !important;
+  line-height: 1 !important;
 
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+
+  transform: none !important;
 }
 
 .remove-btn::before {
   content: "×";
-  font-size: 16px;
-  line-height: 1;
-  font-weight: bold;
+  font-size: 11px !important;
+  line-height: 1 !important;
+  font-weight: bold !important;
 }
 
 .side-btn {
@@ -215,7 +233,7 @@ body {
 }
 
 .resize-handle {
-  z-index: 40;
+  z-index: 50;
 }
 
 input {
@@ -235,7 +253,7 @@ input {
 
   .book {
     border-radius: 0;
-    padding: 6px;
+    padding: 0;
   }
 
   #status {
@@ -244,36 +262,36 @@ input {
   }
 
   .side-btn {
-    width: 36px;
-    height: 36px;
-    bottom: 14px;
-    font-size: 26px;
+    width: 34px;
+    height: 34px;
+    bottom: 12px;
+    font-size: 24px;
   }
 
   #prevBtn {
-    left: 14px;
+    left: 12px;
   }
 
   #nextBtn {
-    right: 14px;
+    right: 12px;
   }
 
   .front-btn {
-    bottom: 14px;
-    height: 36px;
-    font-size: 14px;
+    bottom: 12px;
+    height: 34px;
+    font-size: 13px;
   }
 
   .remove-btn {
-    width: 18px;
-    height: 18px;
-    min-width: 18px;
-    min-height: 18px;
-    max-width: 18px;
-    max-height: 18px;
+    width: 11px !important;
+    height: 11px !important;
+    min-width: 11px !important;
+    min-height: 11px !important;
+    max-width: 11px !important;
+    max-height: 11px !important;
   }
 
   .remove-btn::before {
-    font-size: 14px;
+    font-size: 10px !important;
   }
 }
