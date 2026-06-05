@@ -35,8 +35,8 @@ exports.handler = async function(event) {
 
     const firstName = getValue(payload, ['Name', 'Nombre', 'First name', 'First Name']);
     const lastName = getValue(payload, ['Last Name', 'Apellido', 'Apellidos']);
-    const email = getValue(payload, ['Correo electrónico', 'Email', 'Correo Electronico']);
-    const order = getValue(payload, ['Compra', 'Tipo de pedido', 'Items Buyed']);
+    const email = getValue(payload, ['Correo', 'Correo electrónico', 'Email', 'Correo Electronico']);
+    const order = getOrderType(payload);
     const deliveryMethod = getValue(payload, ['¿Cómo quieres recibir tus stickers?', 'Como quieres recibir tus stickers?', 'Entrega de stickers']);
 
     if (!email) throw new Error('Missing email');
@@ -49,8 +49,8 @@ exports.handler = async function(event) {
     let albumLink = '';
 
     if (
-      orderKey === 'album lleno' ||
       orderKey === 'album completo' ||
+      orderKey === 'album lleno' ||
       orderKey === 'solo album' ||
       orderKey === 'album solo'
     ) {
@@ -69,7 +69,7 @@ exports.handler = async function(event) {
       });
     }
 
-    if (orderKey === 'album lleno' || orderKey === 'album completo') {
+    if (orderKey === 'album completo' || orderKey === 'album lleno') {
       if (deliveryKey === 'whatsapp') {
         await sendEmail({
           to: email,
@@ -89,7 +89,7 @@ exports.handler = async function(event) {
       });
     }
 
-    if (orderKey === 'stickers') {
+    if (orderKey === 'stickers' || orderKey === 'solo stickers') {
       const randomStickers = await getRandomStickerAttachments(RANDOM_STICKER_COUNT);
 
       await sendEmail({
@@ -119,13 +119,57 @@ function assertEnv() {
   if (!SITE_URL) throw new Error('Missing SITE_URL');
 }
 
-function getValue(payload, labels) {
+function getOrderType(payload) {
+  const directOrder = getValue(payload, ['Compra', 'Tipo de pedido', 'Items', 'Items Buyed']);
+
+  if (directOrder) {
+    const directKey = normalize(directOrder);
+
+    if (directKey.includes('album completo')) return 'Álbum Completo';
+    if (directKey.includes('album lleno')) return 'Álbum Completo';
+    if (directKey.includes('solo album')) return 'Solo Álbum';
+    if (directKey.includes('album solo')) return 'Solo Álbum';
+    if (directKey.includes('solo stickers')) return 'Stickers';
+    if (directKey.includes('stickers')) return 'Stickers';
+  }
+
+  const fields = getAllFields(payload);
+
+  for (const field of fields) {
+    const label = String(field.label || field.title || field.name || '').trim();
+    const value = field.value;
+
+    if (value === true && label.includes('Items (')) {
+      if (normalize(label).includes('album completo')) return 'Álbum Completo';
+      if (normalize(label).includes('solo album')) return 'Solo Álbum';
+      if (normalize(label).includes('solo stickers')) return 'Stickers';
+      if (normalize(label).includes('stickers')) return 'Stickers';
+    }
+  }
+
+  return '';
+}
+
+function getAllFields(payload) {
   const fields = [];
 
-  if (payload && payload.data && Array.isArray(payload.data.fields)) fields.push(...payload.data.fields);
-  if (payload && Array.isArray(payload.fields)) fields.push(...payload.fields);
-  if (payload && payload.form_response && Array.isArray(payload.form_response.answers)) fields.push(...payload.form_response.answers);
+  if (payload && payload.data && Array.isArray(payload.data.fields)) {
+    fields.push(...payload.data.fields);
+  }
 
+  if (payload && Array.isArray(payload.fields)) {
+    fields.push(...payload.fields);
+  }
+
+  if (payload && payload.form_response && Array.isArray(payload.form_response.answers)) {
+    fields.push(...payload.form_response.answers);
+  }
+
+  return fields;
+}
+
+function getValue(payload, labels) {
+  const fields = getAllFields(payload);
   const normalizedLabels = labels.map(normalize);
 
   for (const field of fields) {
@@ -139,7 +183,9 @@ function getValue(payload, labels) {
   }
 
   for (const key of Object.keys(payload || {})) {
-    if (normalizedLabels.includes(normalize(key))) return normalizeFieldValue(payload[key]);
+    if (normalizedLabels.includes(normalize(key))) {
+      return normalizeFieldValue(payload[key]);
+    }
   }
 
   return '';
@@ -147,13 +193,28 @@ function getValue(payload, labels) {
 
 function normalizeFieldValue(value) {
   if (value == null) return '';
-  if (Array.isArray(value)) return value.join(', ');
+
+  if (Array.isArray(value)) {
+    return value
+      .map(function(item) {
+        if (typeof item === 'object' && item !== null) {
+          return item.text || item.label || item.value || item.name || item.id || '';
+        }
+
+        return String(item || '');
+      })
+      .filter(Boolean)
+      .join(', ');
+  }
+
   if (typeof value === 'object') {
+    if (value.text) return String(value.text);
     if (value.label) return String(value.label);
     if (value.value) return String(value.value);
     if (value.name) return String(value.name);
     return JSON.stringify(value);
   }
+
   return String(value).trim();
 }
 
@@ -173,7 +234,10 @@ async function createAlbumRecord({ code, firstName, lastName, email, order, deli
   });
 
   const text = await response.text();
-  if (!response.ok) throw new Error(`Create album failed: ${text}`);
+
+  if (!response.ok) {
+    throw new Error(`Create album failed: ${text}`);
+  }
 
   return JSON.parse(text)[0];
 }
@@ -303,7 +367,10 @@ async function listStickerFiles(packName) {
   });
 
   const text = await response.text();
-  if (!response.ok) throw new Error(`Could not list ${packName}: ${text}`);
+
+  if (!response.ok) {
+    throw new Error(`Could not list ${packName}: ${text}`);
+  }
 
   const items = JSON.parse(text);
 
@@ -346,7 +413,9 @@ async function fileToAttachment(file) {
   const url = `${SUPABASE_URL}/storage/v1/object/public/${STICKER_PARENT_BUCKET}/${encodePath(file.path)}`;
   const response = await fetch(url);
 
-  if (!response.ok) throw new Error(`Could not fetch sticker ${file.path}`);
+  if (!response.ok) {
+    throw new Error(`Could not fetch sticker ${file.path}`);
+  }
 
   const arrayBuffer = await response.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
@@ -410,6 +479,7 @@ function supabaseHeaders(options = {}) {
 function createAlbumCode(firstName, lastName) {
   const cleanName = normalize(`${firstName}-${lastName}`).replace(/[^a-z0-9]/g, '');
   const random = Math.random().toString(36).slice(2, 10);
+
   return `${cleanName}-${random}`;
 }
 
@@ -423,6 +493,7 @@ function normalize(text) {
 
 function isImageName(name) {
   const clean = String(name || '').toLowerCase();
+
   return clean.endsWith('.jpg') || clean.endsWith('.jpeg') || clean.endsWith('.png');
 }
 
@@ -443,6 +514,7 @@ function shuffleArray(array) {
   for (let i = array.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     const temp = array[i];
+
     array[i] = array[j];
     array[j] = temp;
   }
