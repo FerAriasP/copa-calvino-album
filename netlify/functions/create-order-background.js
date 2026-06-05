@@ -5,6 +5,8 @@ const FROM_EMAIL = process.env.FROM_EMAIL;
 const FROM_NAME = 'Copa Calvino';
 const SITE_URL = process.env.SITE_URL || '';
 
+const DEBUG_VERSION = 'email-debug-2026-06-05-v1';
+
 const STICKER_PARENT_BUCKET = 'sticker-packs';
 const RANDOM_STICKER_COUNT = 10;
 const MAX_ATTACHMENTS_SIZE_BYTES = 18 * 1024 * 1024;
@@ -29,6 +31,8 @@ exports.handler = async function(event) {
   }
 
   try {
+    console.log('CREATE_ORDER_BACKGROUND_VERSION:', DEBUG_VERSION);
+
     assertEnv();
 
     const payload = JSON.parse(event.body || '{}');
@@ -36,8 +40,14 @@ exports.handler = async function(event) {
     const firstName = getFieldValue(payload, 'Nombre');
     const lastName = getFieldValue(payload, 'Apellido');
     const email = getSubmittedEmail(payload);
+
+    console.log('EMAIL_USED_FROM_TALLY:', email);
+
     const orderSelections = getOrderSelections(payload);
     const deliveryMethod = getDeliveryMethod(payload);
+
+    console.log('ORDER_SELECTIONS:', JSON.stringify(orderSelections));
+    console.log('DELIVERY_METHOD:', deliveryMethod);
 
     if (!email) throw new Error('Missing email from Tally Correo field');
     if (orderSelections.length === 0) throw new Error('Missing order type');
@@ -98,6 +108,8 @@ exports.handler = async function(event) {
       }
     }
 
+    console.log('FUNCTION_FINISHED_OK_FOR_EMAIL:', email);
+
     return jsonResponse(200, {
       ok: true,
       emailUsed: email,
@@ -106,7 +118,7 @@ exports.handler = async function(event) {
       orderSelections
     });
   } catch (error) {
-    console.error(error);
+    console.error('FUNCTION_ERROR:', error);
     return jsonResponse(500, { error: error.message || 'Unknown error' });
   }
 };
@@ -519,6 +531,8 @@ async function fileToAttachment(file) {
 }
 
 async function sendEmail({ to, subject, html, attachments = [] }) {
+  console.log('SENDING_TO_BREVO:', to, subject);
+
   const body = {
     sender: {
       name: FROM_NAME,
@@ -548,6 +562,9 @@ async function sendEmail({ to, subject, html, attachments = [] }) {
   });
 
   const text = await response.text();
+
+  console.log('BREVO_RESPONSE_STATUS:', response.status);
+  console.log('BREVO_RESPONSE_TEXT:', text);
 
   if (!response.ok) {
     throw new Error(`Brevo failed: ${text}`);
