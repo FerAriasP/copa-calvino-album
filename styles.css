@@ -93,7 +93,6 @@ body {
   pointer-events: none;
 }
 
-/* If main.js uses sticker-layer, this locks it to the image */
 .sticker-layer {
   position: absolute;
   inset: 0;
@@ -149,7 +148,6 @@ body {
   display: block;
 }
 
-/* Tiny X button */
 .remove-btn {
   position: absolute !important;
   top: 2px !important;
@@ -158,20 +156,20 @@ body {
   bottom: auto !important;
   z-index: 50 !important;
 
-  width: 7px !important;
-  height: 7px !important;
-  min-width: 7px !important;
-  min-height: 7px !important;
-  max-width: 7px !important;
-  max-height: 7px !important;
+  width: 8px !important;
+  height: 8px !important;
+  min-width: 8px !important;
+  min-height: 8px !important;
+  max-width: 8px !important;
+  max-height: 8px !important;
 
   padding: 0 !important;
   margin: 0 !important;
   border: none !important;
   border-radius: 50% !important;
 
-  background: rgba(0, 0, 0, 0.7) !important;
-  color: white !important;
+  background: rgba(255, 255, 255, 0.65) !important;
+  color: #000000 !important;
 
   cursor: pointer !important;
   font-size: 0 !important;
@@ -188,9 +186,10 @@ body {
 
 .remove-btn::before {
   content: "×";
-  font-size: 6px !important;
+  font-size: 7px !important;
   line-height: 1 !important;
   font-weight: bold !important;
+  color: #000000 !important;
 }
 
 .side-btn {
@@ -296,17 +295,17 @@ input {
   }
 
   .remove-btn {
-    width: 5px !important;
-    height: 5px !important;
-    min-width: 5px !important;
-    min-height: 5px !important;
-    max-width: 5px !important;
-    max-height: 5px !important;
+    width: 6px !important;
+    height: 6px !important;
+    min-width: 6px !important;
+    min-height: 6px !important;
+    max-width: 6px !important;
+    max-height: 6px !important;
     top: 1px !important;
     right: 1px !important;
   }
 
   .remove-btn::before {
-    font-size: 4px !important;
+    font-size: 5px !important;
   }
 }
