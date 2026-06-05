@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const BREVO_API_KEY = process.env.BREVO_API_KEY;
@@ -32,6 +34,7 @@ exports.handler = async function(event) {
     assertEnv();
 
     const payload = JSON.parse(event.body || '{}');
+    const submissionKey = getSubmissionKey(payload);
 
     const firstName = getValue(payload, ['Name', 'Nombre', 'First name', 'First Name']);
     const lastName = getValue(payload, ['Last Name', 'Apellido', 'Apellidos']);
@@ -56,7 +59,8 @@ exports.handler = async function(event) {
       const siteBase = SITE_URL.replace(/\/$/, '');
       albumLink = `${siteBase}/album/${encodeURIComponent(code)}`;
 
-      album = await createAlbumRecord({
+      album = await getOrCreateAlbumRecord({
+        submissionKey,
         code,
         firstName,
         lastName,
@@ -65,21 +69,27 @@ exports.handler = async function(event) {
         deliveryMethod,
         albumLink
       });
+
+      albumLink = album.album_link || albumLink;
     }
 
     if (hasFullAlbum) {
       if (deliveryKey === 'whatsapp') {
-        await sendEmail({
+        await sendEmailOnce({
+          submissionKey,
+          emailType: 'full_album_whatsapp_link',
           to: email,
           subject: 'Tu Álbum Completo - Copa Calvino',
           html: albumLlenoWhatsappEmailTemplate(firstName, lastName, albumLink)
         });
       } else {
-        await sendAlbumLlenoEmails(email, firstName, lastName, albumLink);
+        await sendAlbumLlenoEmails(submissionKey, email, firstName, lastName, albumLink);
       }
     } else {
       if (hasSoloAlbum) {
-        await sendEmail({
+        await sendEmailOnce({
+          submissionKey,
+          emailType: 'solo_album_link',
           to: email,
           subject: 'Tu álbum - Copa Calvino',
           html: albumSoloEmailTemplate(firstName, lastName, 'Solo Álbum', albumLink)
@@ -89,7 +99,9 @@ exports.handler = async function(event) {
       if (hasStickers) {
         const randomStickers = await getRandomStickerAttachments(RANDOM_STICKER_COUNT);
 
-        await sendEmail({
+        await sendEmailOnce({
+          submissionKey,
+          emailType: 'random_stickers',
           to: email,
           subject: 'Tus stickers - Copa Calvino',
           html: stickersEmailTemplate(firstName, lastName, 'Stickers'),
@@ -116,6 +128,26 @@ function assertEnv() {
   if (!BREVO_API_KEY) throw new Error('Missing BREVO_API_KEY');
   if (!FROM_EMAIL) throw new Error('Missing FROM_EMAIL');
   if (!SITE_URL) throw new Error('Missing SITE_URL');
+}
+
+function getSubmissionKey(payload) {
+  const key =
+    payload?.data?.responseId ||
+    payload?.data?.submissionId ||
+    payload?.data?.id ||
+    payload?.responseId ||
+    payload?.submissionId ||
+    payload?.eventId ||
+    payload?.id;
+
+  if (key) {
+    return String(key);
+  }
+
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify(payload))
+    .digest('hex');
 }
 
 function getOrderSelections(payload) {
@@ -207,9 +239,7 @@ function getDeliveryMethod(payload) {
 
 function addSelectionsFromField(field, callback) {
   if (Array.isArray(field.value) && Array.isArray(field.options)) {
-    const selectedValues = field.value.map(function(value) {
-      return String(value);
-    });
+    const selectedValues = field.value.map(String);
 
     field.options.forEach(function(option) {
       const optionId = String(option.id || option.value || option.text || option.label || '');
@@ -327,11 +357,27 @@ function normalizeFieldValue(value) {
   return String(value).trim();
 }
 
-async function createAlbumRecord({ code, firstName, lastName, email, order, deliveryMethod, albumLink }) {
+async function getOrCreateAlbumRecord({
+  submissionKey,
+  code,
+  firstName,
+  lastName,
+  email,
+  order,
+  deliveryMethod,
+  albumLink
+}) {
+  const existing = await getAlbumBySubmissionKey(submissionKey);
+
+  if (existing) {
+    return existing;
+  }
+
   const response = await fetch(`${SUPABASE_URL}/rest/v1/albums`, {
     method: 'POST',
     headers: supabaseHeaders({ prefer: 'return=representation' }),
     body: JSON.stringify({
+      submission_key: submissionKey,
       code,
       first_name: firstName,
       last_name: lastName,
@@ -344,6 +390,14 @@ async function createAlbumRecord({ code, firstName, lastName, email, order, deli
 
   const text = await response.text();
 
+  if (response.status === 409) {
+    const savedAlbum = await getAlbumBySubmissionKey(submissionKey);
+
+    if (savedAlbum) {
+      return savedAlbum;
+    }
+  }
+
   if (!response.ok) {
     throw new Error(`Create album failed: ${text}`);
   }
@@ -351,17 +405,40 @@ async function createAlbumRecord({ code, firstName, lastName, email, order, deli
   return JSON.parse(text)[0];
 }
 
-async function sendAlbumLlenoEmails(email, firstName, lastName, albumLink) {
+async function getAlbumBySubmissionKey(submissionKey) {
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/albums?submission_key=eq.${encodeURIComponent(submissionKey)}&select=*`,
+    {
+      method: 'GET',
+      headers: supabaseHeaders()
+    }
+  );
+
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`Find album failed: ${text}`);
+  }
+
+  const rows = JSON.parse(text);
+
+  return rows && rows.length ? rows[0] : null;
+}
+
+async function sendAlbumLlenoEmails(submissionKey, email, firstName, lastName, albumLink) {
   let albumLinkAlreadySent = false;
 
   for (const packName of PACK_NAMES) {
     const files = await listStickerFiles(packName);
     const batches = await createAttachmentBatches(files);
 
-    for (const batch of batches) {
+    for (let index = 0; index < batches.length; index++) {
+      const batch = batches[index];
       const includeAlbumLink = !albumLinkAlreadySent;
 
-      await sendEmail({
+      await sendEmailOnce({
+        submissionKey,
+        emailType: `full_album_pack_${packName}_batch_${index + 1}`,
         to: email,
         subject: includeAlbumLink ? 'Tu Álbum Completo - Copa Calvino' : `${packName} - Copa Calvino`,
         html: includeAlbumLink
@@ -373,6 +450,99 @@ async function sendAlbumLlenoEmails(email, firstName, lastName, albumLink) {
       albumLinkAlreadySent = true;
     }
   }
+}
+
+async function sendEmailOnce({ submissionKey, emailType, to, subject, html, attachments = [] }) {
+  const idempotencyKey = `${submissionKey}:${emailType}`;
+
+  const reserved = await reserveEmailLock({
+    idempotencyKey,
+    submissionKey,
+    email: to,
+    emailType
+  });
+
+  if (!reserved) {
+    return {
+      skipped: true,
+      reason: 'already_sent_or_sending'
+    };
+  }
+
+  try {
+    await sendEmail({
+      to,
+      subject,
+      html,
+      attachments
+    });
+
+    await markEmailLockSent(idempotencyKey);
+
+    return {
+      skipped: false
+    };
+  } catch (error) {
+    await releaseEmailLock(idempotencyKey);
+    throw error;
+  }
+}
+
+async function reserveEmailLock({ idempotencyKey, submissionKey, email, emailType }) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/email_send_locks`, {
+    method: 'POST',
+    headers: supabaseHeaders(),
+    body: JSON.stringify({
+      idempotency_key: idempotencyKey,
+      submission_key: submissionKey,
+      email,
+      email_type: emailType,
+      status: 'sending',
+      updated_at: new Date().toISOString()
+    })
+  });
+
+  const text = await response.text();
+
+  if (response.status === 409) {
+    return false;
+  }
+
+  if (!response.ok) {
+    throw new Error(`Email lock failed: ${text}`);
+  }
+
+  return true;
+}
+
+async function markEmailLockSent(idempotencyKey) {
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/email_send_locks?idempotency_key=eq.${encodeURIComponent(idempotencyKey)}`,
+    {
+      method: 'PATCH',
+      headers: supabaseHeaders(),
+      body: JSON.stringify({
+        status: 'sent',
+        updated_at: new Date().toISOString()
+      })
+    }
+  );
+
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`Email lock update failed: ${text}`);
+  }
+}
+
+async function releaseEmailLock(idempotencyKey) {
+  await fetch(
+    `${SUPABASE_URL}/rest/v1/email_send_locks?idempotency_key=eq.${encodeURIComponent(idempotencyKey)}`,
+    {
+      method: 'DELETE',
+      headers: supabaseHeaders()
+    }
+  );
 }
 
 function emailWrapper(content) {
