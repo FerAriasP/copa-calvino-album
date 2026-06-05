@@ -273,7 +273,7 @@ function renderPage(direction) {
 
   book.innerHTML = `
     <div class="image-wrap" id="imageWrap">
-      <img class="layout-image" src="${layoutUrl(page.layout)}">
+      <img class="layout-image" id="layoutImage" src="${layoutUrl(page.layout)}">
       ${buyerName && !isAdmin ? `<div class="watermark">${escapeHtml(buyerName)}</div>` : ''}
     </div>
   `;
@@ -289,14 +289,18 @@ function renderPage(direction) {
   }
 
   const imageWrap = document.getElementById('imageWrap');
+  const layoutImage = document.getElementById('layoutImage');
+
+  layoutImage.onload = function() {
+    lockWrapperToImageSize();
+    positionAllSpotElements();
+  };
 
   page.spots.forEach(function(spot) {
     const spotDiv = document.createElement('div');
     spotDiv.className = 'sticker-spot';
-    spotDiv.style.left = spot.left + '%';
-    spotDiv.style.top = spot.top + '%';
-    spotDiv.style.width = spot.width + '%';
-    spotDiv.style.height = spot.height + '%';
+    spotDiv.dataset.spotNumber = String(spot.number);
+    spotDiv.style.position = 'absolute';
 
     if (isAdmin) {
       spotDiv.style.border = '2px solid #00ffd5';
@@ -336,13 +340,79 @@ function renderPage(direction) {
     }
 
     imageWrap.appendChild(spotDiv);
+    applySpotStyle(spotDiv, spot);
   });
+
+  if (layoutImage.complete) {
+    lockWrapperToImageSize();
+    positionAllSpotElements();
+  }
 
   document.getElementById('prevBtn').disabled = currentPage === 0;
   document.getElementById('nextBtn').disabled = currentPage === pages.length - 1;
 
   document.getElementById('frontBtn').style.display =
     currentPage === pages.length - 1 ? 'flex' : 'none';
+}
+
+function lockWrapperToImageSize() {
+  const imageWrap = document.getElementById('imageWrap');
+  const layoutImage = document.getElementById('layoutImage');
+
+  if (!imageWrap || !layoutImage) {
+    return;
+  }
+
+  const imageRect = layoutImage.getBoundingClientRect();
+
+  if (imageRect.width > 0 && imageRect.height > 0) {
+    imageWrap.style.width = imageRect.width + 'px';
+    imageWrap.style.height = imageRect.height + 'px';
+  }
+}
+
+function getImageSize() {
+  const layoutImage = document.getElementById('layoutImage');
+
+  if (!layoutImage) {
+    return { width: 0, height: 0 };
+  }
+
+  const rect = layoutImage.getBoundingClientRect();
+
+  return {
+    width: rect.width,
+    height: rect.height
+  };
+}
+
+function applySpotStyle(element, spot) {
+  const size = getImageSize();
+
+  if (!size.width || !size.height) {
+    element.style.left = spot.left + '%';
+    element.style.top = spot.top + '%';
+    element.style.width = spot.width + '%';
+    element.style.height = spot.height + '%';
+    return;
+  }
+
+  element.style.left = (spot.left / 100) * size.width + 'px';
+  element.style.top = (spot.top / 100) * size.height + 'px';
+  element.style.width = (spot.width / 100) * size.width + 'px';
+  element.style.height = (spot.height / 100) * size.height + 'px';
+}
+
+function positionAllSpotElements() {
+  const page = pages[currentPage];
+
+  page.spots.forEach(function(spot) {
+    const element = document.querySelector(`[data-spot-number="${spot.number}"]`);
+
+    if (element) {
+      applySpotStyle(element, spot);
+    }
+  });
 }
 
 function makeEditable(element, spot, wrapper) {
@@ -360,7 +430,11 @@ function makeEditable(element, spot, wrapper) {
 
     mode = event.target.classList.contains('resize-handle') ? 'resize' : 'move';
 
-    const rect = wrapper.getBoundingClientRect();
+    const size = getImageSize();
+
+    if (!size.width || !size.height) {
+      return;
+    }
 
     startX = event.clientX;
     startY = event.clientY;
@@ -370,8 +444,8 @@ function makeEditable(element, spot, wrapper) {
     startHeight = spot.height;
 
     function onMove(moveEvent) {
-      const dx = ((moveEvent.clientX - startX) / rect.width) * 100;
-      const dy = ((moveEvent.clientY - startY) / rect.height) * 100;
+      const dx = ((moveEvent.clientX - startX) / size.width) * 100;
+      const dy = ((moveEvent.clientY - startY) / size.height) * 100;
 
       if (mode === 'move') {
         spot.left = clamp(startLeft + dx, 0, 100 - spot.width);
@@ -383,10 +457,7 @@ function makeEditable(element, spot, wrapper) {
         spot.height = clamp(startHeight + dy, 3, 100 - spot.top);
       }
 
-      element.style.left = spot.left + '%';
-      element.style.top = spot.top + '%';
-      element.style.width = spot.width + '%';
-      element.style.height = spot.height + '%';
+      applySpotStyle(element, spot);
     }
 
     function onUp() {
@@ -557,5 +628,10 @@ function escapeHtml(text) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
 }
+
+window.addEventListener('resize', function() {
+  lockWrapperToImageSize();
+  positionAllSpotElements();
+});
 
 loadAlbum();
