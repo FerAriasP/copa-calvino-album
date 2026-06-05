@@ -1,7 +1,8 @@
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const FROM_EMAIL = process.env.FROM_EMAIL || 'Copa Calvino <onboarding@resend.dev>';
+const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const FROM_EMAIL = process.env.FROM_EMAIL;
+const FROM_NAME = 'Copa Calvino';
 const SITE_URL = process.env.SITE_URL || '';
 
 const STICKER_PARENT_BUCKET = 'sticker-packs';
@@ -19,6 +20,10 @@ const PACK_NAMES = [
 ];
 
 exports.handler = async function(event) {
+  if (event.httpMethod === 'OPTIONS') {
+    return jsonResponse(200, { ok: true });
+  }
+
   if (event.httpMethod !== 'POST') {
     return jsonResponse(405, { error: 'Method not allowed' });
   }
@@ -43,9 +48,15 @@ exports.handler = async function(event) {
     let album = null;
     let albumLink = '';
 
-    if (orderKey === 'album lleno' || orderKey === 'album completo' || orderKey === 'solo album' || orderKey === 'album solo') {
+    if (
+      orderKey === 'album lleno' ||
+      orderKey === 'album completo' ||
+      orderKey === 'solo album' ||
+      orderKey === 'album solo'
+    ) {
       const code = createAlbumCode(firstName, lastName);
-      albumLink = `${SITE_URL}/album/${encodeURIComponent(code)}`;
+      const siteBase = SITE_URL.replace(/\/$/, '');
+      albumLink = `${siteBase}/album/${encodeURIComponent(code)}`;
 
       album = await createAlbumRecord({
         code,
@@ -103,7 +114,8 @@ exports.handler = async function(event) {
 function assertEnv() {
   if (!SUPABASE_URL) throw new Error('Missing SUPABASE_URL');
   if (!SUPABASE_SERVICE_ROLE_KEY) throw new Error('Missing SUPABASE_SERVICE_ROLE_KEY');
-  if (!RESEND_API_KEY) throw new Error('Missing RESEND_API_KEY');
+  if (!BREVO_API_KEY) throw new Error('Missing BREVO_API_KEY');
+  if (!FROM_EMAIL) throw new Error('Missing FROM_EMAIL');
   if (!SITE_URL) throw new Error('Missing SITE_URL');
 }
 
@@ -265,13 +277,16 @@ function stickersEmailTemplate(firstName, lastName, order) {
 
 async function getRandomStickerAttachments(count) {
   const allFiles = [];
+
   for (const packName of PACK_NAMES) {
     const files = await listStickerFiles(packName);
     allFiles.push(...files);
   }
 
   shuffleArray(allFiles);
+
   const selected = allFiles.slice(0, count);
+
   return Promise.all(selected.map(fileToAttachment));
 }
 
@@ -291,6 +306,7 @@ async function listStickerFiles(packName) {
   if (!response.ok) throw new Error(`Could not list ${packName}: ${text}`);
 
   const items = JSON.parse(text);
+
   return items
     .filter(item => item && item.name && isImageName(item.name))
     .map(item => ({
@@ -319,7 +335,9 @@ async function createAttachmentBatches(files) {
     currentSize += size;
   }
 
-  if (currentBatch.length > 0) batches.push(currentBatch);
+  if (currentBatch.length > 0) {
+    batches.push(currentBatch);
+  }
 
   return batches;
 }
@@ -334,29 +352,45 @@ async function fileToAttachment(file) {
   const buffer = Buffer.from(arrayBuffer);
 
   return {
-    filename: file.name,
+    name: file.name,
     content: buffer.toString('base64')
   };
 }
 
 async function sendEmail({ to, subject, html, attachments = [] }) {
-  const response = await fetch('https://api.resend.com/emails', {
+  const body = {
+    sender: {
+      name: FROM_NAME,
+      email: FROM_EMAIL
+    },
+    to: [
+      {
+        email: to
+      }
+    ],
+    subject,
+    htmlContent: html
+  };
+
+  if (attachments.length > 0) {
+    body.attachment = attachments;
+  }
+
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${RESEND_API_KEY}`,
-      'Content-Type': 'application/json'
+      'api-key': BREVO_API_KEY,
+      'Content-Type': 'application/json',
+      Accept: 'application/json'
     },
-    body: JSON.stringify({
-      from: FROM_EMAIL,
-      to: [to],
-      subject,
-      html,
-      attachments
-    })
+    body: JSON.stringify(body)
   });
 
   const text = await response.text();
-  if (!response.ok) throw new Error(`Resend failed: ${text}`);
+
+  if (!response.ok) {
+    throw new Error(`Brevo failed: ${text}`);
+  }
 }
 
 function supabaseHeaders(options = {}) {
@@ -366,7 +400,9 @@ function supabaseHeaders(options = {}) {
     'Content-Type': 'application/json'
   };
 
-  if (options.prefer) headers.Prefer = options.prefer;
+  if (options.prefer) {
+    headers.Prefer = options.prefer;
+  }
 
   return headers;
 }
@@ -417,7 +453,9 @@ function jsonResponse(statusCode, body) {
     statusCode,
     headers: {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*'
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS'
     },
     body: JSON.stringify(body)
   };
