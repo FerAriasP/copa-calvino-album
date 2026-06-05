@@ -16,6 +16,7 @@ const pages = [
   { title: 'Front Page', layout: 'front.jpg', spots: [] },
   { title: 'Bienvenida', layout: 'bienvenida.jpg', spots: [] },
   { title: 'Historia de la Copa Calvino', layout: 'historia.jpg', spots: [] },
+
   {
     title: 'Submarino Amarillo',
     layout: 'submarino.jpg',
@@ -24,6 +25,7 @@ const pages = [
       ...spotsFromCoords([5,6,7,8], [52.2,64.3,76.4,88.4], 55.5, 8.8, 19.5)
     ]
   },
+
   {
     title: 'Hammers',
     layout: 'hammers.jpg',
@@ -32,6 +34,7 @@ const pages = [
       ...spotsFromCoords([13,14,15,16], [47.0,59.2,71.5,83.7], 56.0, 9.0, 18.5)
     ]
   },
+
   {
     title: 'Equipo Blanco',
     layout: 'blanco.jpg',
@@ -40,6 +43,7 @@ const pages = [
       ...spotsFromCoords([21,22,23,24], [51.0,63.0,75.5,87.3], 51.5, 8.8, 14.5)
     ]
   },
+
   {
     title: 'Equipo Rojo',
     layout: 'rojo.jpg',
@@ -48,6 +52,7 @@ const pages = [
       ...spotsFromCoords([29,30,31,32], [48.3,60.8,73.0,85.2], 52.5, 8.2, 15.5)
     ]
   },
+
   {
     title: 'San Jose A',
     layout: 'sanjose.jpg',
@@ -56,6 +61,7 @@ const pages = [
       ...spotsFromCoords([37,38,39,40], [52.4,63.6,75.0,86.4], 58.0, 8.5, 18.0)
     ]
   },
+
   {
     title: 'Equipo Verde',
     layout: 'verde.jpg',
@@ -64,6 +70,7 @@ const pages = [
       ...spotsFromCoords([45,46,47,48], [48.3,60.8,73.0,85.2], 52.5, 8.2, 15.5)
     ]
   },
+
   {
     title: 'Leyendas',
     layout: 'leyendas.jpg',
@@ -76,18 +83,29 @@ const pages = [
       { number: 54, left: 50, top: 62, width: 14, height: 30 }
     ]
   },
+
   { title: 'Back Page', layout: 'back.jpg', spots: [] }
 ];
 
 function getAlbumCodeFromUrl() {
   const parts = window.location.pathname.split('/').filter(Boolean);
-  if (parts[0] === 'album' && parts[1]) return parts[1];
+
+  if (parts[0] === 'album' && parts[1]) {
+    return parts[1];
+  }
+
   return params.get('album') || params.get('user') || '';
 }
 
 function spotsFromCoords(numbers, lefts, top, width, height) {
   return numbers.map(function(number, index) {
-    return { number, left: lefts[index], top, width, height };
+    return {
+      number: number,
+      left: lefts[index],
+      top: top,
+      width: width,
+      height: height
+    };
   });
 }
 
@@ -108,6 +126,12 @@ function setStatus(message) {
 }
 
 async function loadAlbum() {
+  if (isAdmin) {
+    setupAdminControls();
+  }
+
+  await loadSpotPositions();
+
   if (!albumCode && !isAdmin) {
     document.getElementById('book').innerHTML = '<div class="error-box">Album link missing.</div>';
     setStatus('Missing album code');
@@ -115,9 +139,15 @@ async function loadAlbum() {
   }
 
   if (isAdmin && !albumCode) {
-    album = { id: null, code: 'admin-test', first_name: 'Prueba', last_name: 'Watermark' };
+    album = {
+      id: null,
+      code: 'admin-test',
+      first_name: 'Prueba',
+      last_name: 'Watermark'
+    };
+
     renderPage();
-    setStatus('Admin/test view');
+    setStatus('Admin mode');
     return;
   }
 
@@ -134,13 +164,50 @@ async function loadAlbum() {
   }
 
   album = data;
+
   await loadStickers();
+
   renderPage();
-  setStatus('Album loaded');
+  setStatus(isAdmin ? 'Admin mode' : 'Album loaded');
+}
+
+async function loadSpotPositions() {
+  const { data, error } = await supabaseClient
+    .from('spot_positions')
+    .select('*');
+
+  if (error || !data) {
+    return;
+  }
+
+  data.forEach(function(row) {
+    const spot = findSpotByNumber(row.spot_number);
+
+    if (spot) {
+      spot.left = Number(row.left_pct);
+      spot.top = Number(row.top_pct);
+      spot.width = Number(row.width_pct);
+      spot.height = Number(row.height_pct);
+    }
+  });
+}
+
+function findSpotByNumber(spotNumber) {
+  for (const page of pages) {
+    for (const spot of page.spots) {
+      if (spot.number === Number(spotNumber)) {
+        return spot;
+      }
+    }
+  }
+
+  return null;
 }
 
 async function loadStickers() {
-  if (!album || !album.id) return;
+  if (!album || !album.id) {
+    return;
+  }
 
   const { data, error } = await supabaseClient
     .from('album_stickers')
@@ -153,12 +220,48 @@ async function loadStickers() {
   }
 
   savedStickers = {};
+
   (data || []).forEach(function(row) {
     savedStickers[row.spot_number] = {
       storagePath: row.storage_path,
       url: uploadUrl(row.storage_path)
     };
   });
+}
+
+function setupAdminControls() {
+  if (document.getElementById('adminControls')) {
+    return;
+  }
+
+  const controls = document.createElement('div');
+  controls.id = 'adminControls';
+  controls.style.textAlign = 'center';
+  controls.style.marginBottom = '12px';
+
+  controls.innerHTML = `
+    <button
+      id="savePositionsBtn"
+      style="
+        padding: 10px 16px;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        background: #00ffd5;
+        color: #111;
+        font-weight: bold;
+      "
+    >
+      Save sticker positions
+    </button>
+  `;
+
+  document.querySelector('.app').insertBefore(
+    controls,
+    document.querySelector('.book-area')
+  );
+
+  document.getElementById('savePositionsBtn').addEventListener('click', saveSpotPositions);
 }
 
 function renderPage(direction) {
@@ -178,6 +281,7 @@ function renderPage(direction) {
   if (direction) {
     requestAnimationFrame(function() {
       book.classList.add(direction === 'prev' ? 'turn-prev' : 'turn-next');
+
       setTimeout(function() {
         book.classList.remove('turn-next', 'turn-prev');
       }, 360);
@@ -194,15 +298,41 @@ function renderPage(direction) {
     spotDiv.style.width = spot.width + '%';
     spotDiv.style.height = spot.height + '%';
 
-    spotDiv.onclick = function() { chooseSticker(spot.number); };
-
-    if (savedStickers[spot.number]) {
+    if (isAdmin) {
+      spotDiv.style.border = '2px solid #00ffd5';
+      spotDiv.style.background = 'rgba(0, 255, 213, 0.22)';
+      spotDiv.style.cursor = 'move';
+      spotDiv.style.touchAction = 'none';
       spotDiv.innerHTML = `
-        <img src="${savedStickers[spot.number].url}">
-        <button class="remove-btn" onclick="removeStickerFromAlbum(event, ${spot.number})">Remove</button>
+        <span>${spot.number}</span>
+        <div
+          class="resize-handle"
+          style="
+            position: absolute;
+            right: 0;
+            bottom: 0;
+            width: 16px;
+            height: 16px;
+            background: #00ffd5;
+            cursor: nwse-resize;
+          "
+        ></div>
       `;
+
+      makeEditable(spotDiv, spot, imageWrap);
     } else {
-      spotDiv.textContent = spot.number;
+      spotDiv.onclick = function() {
+        chooseSticker(spot.number);
+      };
+
+      if (savedStickers[spot.number]) {
+        spotDiv.innerHTML = `
+          <img src="${savedStickers[spot.number].url}">
+          <button class="remove-btn" onclick="removeStickerFromAlbum(event, ${spot.number})">Remove</button>
+        `;
+      } else {
+        spotDiv.textContent = spot.number;
+      }
     }
 
     imageWrap.appendChild(spotDiv);
@@ -210,7 +340,100 @@ function renderPage(direction) {
 
   document.getElementById('prevBtn').disabled = currentPage === 0;
   document.getElementById('nextBtn').disabled = currentPage === pages.length - 1;
-  document.getElementById('frontBtn').style.display = currentPage === pages.length - 1 ? 'flex' : 'none';
+
+  document.getElementById('frontBtn').style.display =
+    currentPage === pages.length - 1 ? 'flex' : 'none';
+}
+
+function makeEditable(element, spot, wrapper) {
+  let mode = null;
+  let startX = 0;
+  let startY = 0;
+  let startLeft = 0;
+  let startTop = 0;
+  let startWidth = 0;
+  let startHeight = 0;
+
+  element.addEventListener('pointerdown', function(event) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    mode = event.target.classList.contains('resize-handle') ? 'resize' : 'move';
+
+    const rect = wrapper.getBoundingClientRect();
+
+    startX = event.clientX;
+    startY = event.clientY;
+    startLeft = spot.left;
+    startTop = spot.top;
+    startWidth = spot.width;
+    startHeight = spot.height;
+
+    function onMove(moveEvent) {
+      const dx = ((moveEvent.clientX - startX) / rect.width) * 100;
+      const dy = ((moveEvent.clientY - startY) / rect.height) * 100;
+
+      if (mode === 'move') {
+        spot.left = clamp(startLeft + dx, 0, 100 - spot.width);
+        spot.top = clamp(startTop + dy, 0, 100 - spot.height);
+      }
+
+      if (mode === 'resize') {
+        spot.width = clamp(startWidth + dx, 3, 100 - spot.left);
+        spot.height = clamp(startHeight + dy, 3, 100 - spot.top);
+      }
+
+      element.style.left = spot.left + '%';
+      element.style.top = spot.top + '%';
+      element.style.width = spot.width + '%';
+      element.style.height = spot.height + '%';
+    }
+
+    function onUp() {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+    }
+
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+  });
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+async function saveSpotPositions() {
+  const rows = [];
+
+  pages.forEach(function(page) {
+    page.spots.forEach(function(spot) {
+      rows.push({
+        spot_number: spot.number,
+        page_layout: page.layout,
+        left_pct: spot.left,
+        top_pct: spot.top,
+        width_pct: spot.width,
+        height_pct: spot.height,
+        updated_at: new Date().toISOString()
+      });
+    });
+  });
+
+  setStatus('Saving positions...');
+
+  const { error } = await supabaseClient
+    .from('spot_positions')
+    .upsert(rows, {
+      onConflict: 'spot_number'
+    });
+
+  if (error) {
+    setStatus('Error saving positions');
+    return;
+  }
+
+  setStatus('Positions saved');
 }
 
 function nextPage() {
@@ -244,7 +467,10 @@ function chooseSticker(spotNumber) {
 
 document.getElementById('fileInput').addEventListener('change', async function() {
   const file = this.files[0];
-  if (!file || selectedSpot === null || !album) return;
+
+  if (!file || selectedSpot === null || !album) {
+    return;
+  }
 
   const extension = file.type === 'image/png' ? 'png' : 'jpg';
   const storagePath = `${album.code}/spot-${selectedSpot}-${Date.now()}.${extension}`;
@@ -270,16 +496,23 @@ document.getElementById('fileInput').addEventListener('change', async function()
       spot_number: selectedSpot,
       storage_path: storagePath,
       updated_at: new Date().toISOString()
-    }, { onConflict: 'album_id,spot_number' });
+    }, {
+      onConflict: 'album_id,spot_number'
+    });
 
   if (upsertResult.error) {
     setStatus('Error saving sticker');
     return;
   }
 
-  savedStickers[selectedSpot] = { storagePath, url: uploadUrl(storagePath) };
+  savedStickers[selectedSpot] = {
+    storagePath: storagePath,
+    url: uploadUrl(storagePath)
+  };
+
   selectedSpot = null;
   this.value = '';
+
   renderPage();
   setStatus('Saved');
 });
@@ -287,13 +520,17 @@ document.getElementById('fileInput').addEventListener('change', async function()
 async function removeStickerFromAlbum(event, spotNumber) {
   event.stopPropagation();
 
-  if (!album || !savedStickers[spotNumber]) return;
+  if (!album || !savedStickers[spotNumber]) {
+    return;
+  }
 
   setStatus('Removing...');
 
   const storagePath = savedStickers[spotNumber].storagePath;
 
-  await supabaseClient.storage.from('album-uploads').remove([storagePath]);
+  await supabaseClient.storage
+    .from('album-uploads')
+    .remove([storagePath]);
 
   const deleteResult = await supabaseClient
     .from('album_stickers')
@@ -307,6 +544,7 @@ async function removeStickerFromAlbum(event, spotNumber) {
   }
 
   delete savedStickers[spotNumber];
+
   renderPage();
   setStatus('Removed');
 }
