@@ -33,13 +33,13 @@ exports.handler = async function(event) {
 
     const payload = JSON.parse(event.body || '{}');
 
-    const firstName = getValue(payload, ['Nombre', 'Name', 'First name', 'First Name']);
-    const lastName = getValue(payload, ['Apellido', 'Last Name', 'Apellidos']);
-    const email = getEmailValue(payload);
+    const firstName = getFieldValue(payload, 'Nombre');
+    const lastName = getFieldValue(payload, 'Apellido');
+    const email = getSubmittedEmail(payload);
     const orderSelections = getOrderSelections(payload);
     const deliveryMethod = getDeliveryMethod(payload);
 
-    if (!email) throw new Error('Missing email');
+    if (!email) throw new Error('Missing email from Tally Correo field');
     if (orderSelections.length === 0) throw new Error('Missing order type');
 
     const hasFullAlbum = orderSelections.includes('FULL_ALBUM');
@@ -119,24 +119,45 @@ function assertEnv() {
   if (!SITE_URL) throw new Error('Missing SITE_URL');
 }
 
-function getEmailValue(payload) {
+function getSubmittedEmail(payload) {
   const fields = getAllFields(payload);
 
-  for (const field of fields) {
-    const label = normalize(field.label || field.title || field.name || '');
-    const type = normalize(field.type || '');
+  const exactCorreoField = fields.find(function(field) {
+    return normalize(field.label) === 'correo';
+  });
 
-    if (
-      type.includes('email') ||
-      label === 'correo' ||
-      label === 'email' ||
-      label.includes('correo electronico')
-    ) {
-      return normalizeFieldValue(field.value ?? field.answer ?? field.email ?? '').trim();
-    }
+  if (exactCorreoField) {
+    const email = normalizeFieldValue(exactCorreoField.value).trim();
+    if (isValidEmail(email)) return email;
   }
 
-  return getValue(payload, ['Correo', 'Correo electrónico', 'Email', 'Correo Electronico']).trim();
+  const emailTypeField = fields.find(function(field) {
+    return String(field.type || '').toUpperCase().includes('EMAIL');
+  });
+
+  if (emailTypeField) {
+    const email = normalizeFieldValue(emailTypeField.value).trim();
+    if (isValidEmail(email)) return email;
+  }
+
+  throw new Error('Could not read email from Tally Correo field');
+}
+
+function isValidEmail(value) {
+  return String(value || '').includes('@') && String(value || '').includes('.');
+}
+
+function getFieldValue(payload, labelName) {
+  const fields = getAllFields(payload);
+  const target = normalize(labelName);
+
+  const field = fields.find(function(item) {
+    return normalize(item.label || item.title || item.name || '') === target;
+  });
+
+  if (!field) return '';
+
+  return normalizeFieldValue(field.value);
 }
 
 function getOrderSelections(payload) {
@@ -159,37 +180,13 @@ function getOrderSelections(payload) {
     }
   }
 
-  for (const field of fields) {
-    const label = String(field.label || field.title || field.name || '').trim();
-    const labelKey = normalize(label);
+  fields.forEach(function(field) {
+    const labelKey = normalize(field.label || field.title || field.name || '');
 
-    if (
-      labelKey === 'items' ||
-      labelKey === 'compra' ||
-      labelKey === 'tipo de pedido'
-    ) {
+    if (labelKey === 'items' || labelKey === 'compra' || labelKey === 'tipo de pedido') {
       addSelectionsFromField(field, addOrderText);
     }
-
-    if (
-      labelKey.includes('items (') &&
-      (field.value === true || field.value === 'true')
-    ) {
-      addOrderText(label);
-    }
-  }
-
-  for (const key of Object.keys(payload || {})) {
-    const keyName = normalize(key);
-
-    if (
-      keyName === 'items' ||
-      keyName === 'compra' ||
-      keyName === 'tipo de pedido'
-    ) {
-      addOrderText(normalizeFieldValue(payload[key]));
-    }
-  }
+  });
 
   return Array.from(selections);
 }
@@ -201,18 +198,12 @@ function getDeliveryMethod(payload) {
   function addDeliveryText(text) {
     const key = normalize(text);
 
-    if (key.includes('whatsapp')) {
-      delivery = 'WhatsApp';
-    }
-
-    if (key.includes('correo') || key.includes('email')) {
-      delivery = 'Correo';
-    }
+    if (key.includes('whatsapp')) delivery = 'WhatsApp';
+    if (key.includes('correo') || key.includes('email')) delivery = 'Correo';
   }
 
-  for (const field of fields) {
-    const label = String(field.label || field.title || field.name || '').trim();
-    const labelKey = normalize(label);
+  fields.forEach(function(field) {
+    const labelKey = normalize(field.label || field.title || field.name || '');
 
     if (
       labelKey.includes('como quieres recibir tus stickers') ||
@@ -221,7 +212,7 @@ function getDeliveryMethod(payload) {
     ) {
       addSelectionsFromField(field, addDeliveryText);
     }
-  }
+  });
 
   return delivery;
 }
@@ -236,10 +227,6 @@ function addSelectionsFromField(field, callback) {
       if (selectedValues.includes(optionId)) {
         callback(option.text || option.label || option.value || '');
       }
-    });
-
-    field.value.forEach(function(value) {
-      callback(normalizeFieldValue(value));
     });
 
     return;
@@ -263,6 +250,8 @@ function addSelectionsFromField(field, callback) {
         callback(option.text || option.label || option.value || '');
       }
     });
+
+    return;
   }
 
   callback(normalizeFieldValue(field.value));
@@ -279,44 +268,19 @@ function getOrderLabel(orderSelections) {
 }
 
 function getAllFields(payload) {
-  const fields = [];
-
   if (payload && payload.data && Array.isArray(payload.data.fields)) {
-    fields.push(...payload.data.fields);
+    return payload.data.fields;
   }
 
   if (payload && Array.isArray(payload.fields)) {
-    fields.push(...payload.fields);
+    return payload.fields;
   }
 
   if (payload && payload.form_response && Array.isArray(payload.form_response.answers)) {
-    fields.push(...payload.form_response.answers);
+    return payload.form_response.answers;
   }
 
-  return fields;
-}
-
-function getValue(payload, labels) {
-  const fields = getAllFields(payload);
-  const normalizedLabels = labels.map(normalize);
-
-  for (const field of fields) {
-    const possibleNames = [field.label, field.title, field.name, field.key, field.question, field.id]
-      .filter(Boolean)
-      .map(normalize);
-
-    if (possibleNames.some(name => normalizedLabels.includes(name))) {
-      return normalizeFieldValue(field.value ?? field.answer ?? field.text ?? field.email ?? field.choice ?? field.choices ?? '');
-    }
-  }
-
-  for (const key of Object.keys(payload || {})) {
-    if (normalizedLabels.includes(normalize(key))) {
-      return normalizeFieldValue(payload[key]);
-    }
-  }
-
-  return '';
+  return [];
 }
 
 function normalizeFieldValue(value) {
