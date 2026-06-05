@@ -1,5 +1,3 @@
-const crypto = require('crypto');
-
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const BREVO_API_KEY = process.env.BREVO_API_KEY;
@@ -34,10 +32,9 @@ exports.handler = async function(event) {
     assertEnv();
 
     const payload = JSON.parse(event.body || '{}');
-    const submissionKey = getSubmissionKey(payload);
 
-    const firstName = getValue(payload, ['Name', 'Nombre', 'First name', 'First Name']);
-    const lastName = getValue(payload, ['Last Name', 'Apellido', 'Apellidos']);
+    const firstName = getValue(payload, ['Nombre', 'Name', 'First name', 'First Name']);
+    const lastName = getValue(payload, ['Apellido', 'Last Name', 'Apellidos']);
     const email = getEmailValue(payload);
     const orderSelections = getOrderSelections(payload);
     const deliveryMethod = getDeliveryMethod(payload);
@@ -59,8 +56,7 @@ exports.handler = async function(event) {
       const siteBase = SITE_URL.replace(/\/$/, '');
       albumLink = `${siteBase}/album/${encodeURIComponent(code)}`;
 
-      album = await getOrCreateAlbumRecord({
-        submissionKey,
+      album = await createAlbumRecord({
         code,
         firstName,
         lastName,
@@ -69,8 +65,6 @@ exports.handler = async function(event) {
         deliveryMethod,
         albumLink
       });
-
-      albumLink = album.album_link || albumLink;
     }
 
     if (hasFullAlbum) {
@@ -106,10 +100,10 @@ exports.handler = async function(event) {
 
     return jsonResponse(200, {
       ok: true,
+      emailUsed: email,
       albumLink,
       albumId: album ? album.id : null,
-      orderSelections,
-      emailUsed: email
+      orderSelections
     });
   } catch (error) {
     console.error(error);
@@ -123,26 +117,6 @@ function assertEnv() {
   if (!BREVO_API_KEY) throw new Error('Missing BREVO_API_KEY');
   if (!FROM_EMAIL) throw new Error('Missing FROM_EMAIL');
   if (!SITE_URL) throw new Error('Missing SITE_URL');
-}
-
-function getSubmissionKey(payload) {
-  const key =
-    payload?.data?.responseId ||
-    payload?.data?.submissionId ||
-    payload?.data?.id ||
-    payload?.responseId ||
-    payload?.submissionId ||
-    payload?.eventId ||
-    payload?.id;
-
-  if (key) {
-    return String(key);
-  }
-
-  return crypto
-    .createHash('sha256')
-    .update(JSON.stringify(payload))
-    .digest('hex');
 }
 
 function getEmailValue(payload) {
@@ -372,27 +346,11 @@ function normalizeFieldValue(value) {
   return String(value).trim();
 }
 
-async function getOrCreateAlbumRecord({
-  submissionKey,
-  code,
-  firstName,
-  lastName,
-  email,
-  order,
-  deliveryMethod,
-  albumLink
-}) {
-  const existing = await getAlbumBySubmissionKey(submissionKey);
-
-  if (existing) {
-    return existing;
-  }
-
+async function createAlbumRecord({ code, firstName, lastName, email, order, deliveryMethod, albumLink }) {
   const response = await fetch(`${SUPABASE_URL}/rest/v1/albums`, {
     method: 'POST',
     headers: supabaseHeaders({ prefer: 'return=representation' }),
     body: JSON.stringify({
-      submission_key: submissionKey,
       code,
       first_name: firstName,
       last_name: lastName,
@@ -405,39 +363,11 @@ async function getOrCreateAlbumRecord({
 
   const text = await response.text();
 
-  if (response.status === 409) {
-    const savedAlbum = await getAlbumBySubmissionKey(submissionKey);
-
-    if (savedAlbum) {
-      return savedAlbum;
-    }
-  }
-
   if (!response.ok) {
     throw new Error(`Create album failed: ${text}`);
   }
 
   return JSON.parse(text)[0];
-}
-
-async function getAlbumBySubmissionKey(submissionKey) {
-  const response = await fetch(
-    `${SUPABASE_URL}/rest/v1/albums?submission_key=eq.${encodeURIComponent(submissionKey)}&select=*`,
-    {
-      method: 'GET',
-      headers: supabaseHeaders()
-    }
-  );
-
-  const text = await response.text();
-
-  if (!response.ok) {
-    return null;
-  }
-
-  const rows = JSON.parse(text);
-
-  return rows && rows.length ? rows[0] : null;
 }
 
 async function sendAlbumLlenoEmails(email, firstName, lastName, albumLink) {
