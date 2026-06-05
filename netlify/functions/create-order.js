@@ -36,24 +36,22 @@ exports.handler = async function(event) {
     const firstName = getValue(payload, ['Name', 'Nombre', 'First name', 'First Name']);
     const lastName = getValue(payload, ['Last Name', 'Apellido', 'Apellidos']);
     const email = getValue(payload, ['Correo', 'Correo electrónico', 'Email', 'Correo Electronico']);
-    const order = getOrderType(payload);
+    const orderSelections = getOrderSelections(payload);
     const deliveryMethod = getDeliveryMethod(payload);
 
     if (!email) throw new Error('Missing email');
-    if (!order) throw new Error('Missing order type');
+    if (orderSelections.length === 0) throw new Error('Missing order type');
 
-    const orderKey = normalize(order);
+    const hasFullAlbum = orderSelections.includes('FULL_ALBUM');
+    const hasSoloAlbum = orderSelections.includes('SOLO_ALBUM');
+    const hasStickers = orderSelections.includes('STICKERS');
     const deliveryKey = normalize(deliveryMethod);
+    const orderLabel = getOrderLabel(orderSelections);
 
     let album = null;
     let albumLink = '';
 
-    if (
-      orderKey === 'album completo' ||
-      orderKey === 'album lleno' ||
-      orderKey === 'solo album' ||
-      orderKey === 'album solo'
-    ) {
+    if (hasFullAlbum || hasSoloAlbum) {
       const code = createAlbumCode(firstName, lastName);
       const siteBase = SITE_URL.replace(/\/$/, '');
       albumLink = `${siteBase}/album/${encodeURIComponent(code)}`;
@@ -63,13 +61,13 @@ exports.handler = async function(event) {
         firstName,
         lastName,
         email,
-        order,
+        order: orderLabel,
         deliveryMethod,
         albumLink
       });
     }
 
-    if (orderKey === 'album completo' || orderKey === 'album lleno') {
+    if (hasFullAlbum) {
       if (deliveryKey === 'whatsapp') {
         await sendEmail({
           to: email,
@@ -79,31 +77,32 @@ exports.handler = async function(event) {
       } else {
         await sendAlbumLlenoEmails(email, firstName, lastName, albumLink);
       }
-    }
+    } else {
+      if (hasSoloAlbum) {
+        await sendEmail({
+          to: email,
+          subject: 'Tu álbum - Copa Calvino',
+          html: albumSoloEmailTemplate(firstName, lastName, 'Solo Álbum', albumLink)
+        });
+      }
 
-    if (orderKey === 'solo album' || orderKey === 'album solo') {
-      await sendEmail({
-        to: email,
-        subject: 'Tu álbum - Copa Calvino',
-        html: albumSoloEmailTemplate(firstName, lastName, order, albumLink)
-      });
-    }
+      if (hasStickers) {
+        const randomStickers = await getRandomStickerAttachments(RANDOM_STICKER_COUNT);
 
-    if (orderKey === 'stickers' || orderKey === 'solo stickers') {
-      const randomStickers = await getRandomStickerAttachments(RANDOM_STICKER_COUNT);
-
-      await sendEmail({
-        to: email,
-        subject: 'Tus stickers - Copa Calvino',
-        html: stickersEmailTemplate(firstName, lastName, order),
-        attachments: randomStickers
-      });
+        await sendEmail({
+          to: email,
+          subject: 'Tus stickers - Copa Calvino',
+          html: stickersEmailTemplate(firstName, lastName, 'Stickers'),
+          attachments: randomStickers
+        });
+      }
     }
 
     return jsonResponse(200, {
       ok: true,
       albumLink,
-      albumId: album ? album.id : null
+      albumId: album ? album.id : null,
+      orderSelections
     });
   } catch (error) {
     console.error(error);
@@ -119,20 +118,24 @@ function assertEnv() {
   if (!SITE_URL) throw new Error('Missing SITE_URL');
 }
 
-function getOrderType(payload) {
+function getOrderSelections(payload) {
   const fields = getAllFields(payload);
+  const selections = new Set();
 
-  function mapOrderText(text) {
+  function addOrderText(text) {
     const key = normalize(text);
 
-    if (key.includes('album completo')) return 'Álbum Completo';
-    if (key.includes('album lleno')) return 'Álbum Completo';
-    if (key.includes('solo album')) return 'Solo Álbum';
-    if (key.includes('album solo')) return 'Solo Álbum';
-    if (key.includes('solo stickers')) return 'Stickers';
-    if (key.includes('stickers')) return 'Stickers';
+    if (key.includes('album completo') || key.includes('album lleno')) {
+      selections.add('FULL_ALBUM');
+    }
 
-    return '';
+    if (key.includes('solo album') || key.includes('album solo')) {
+      selections.add('SOLO_ALBUM');
+    }
+
+    if (key.includes('solo stickers') || key === 'stickers' || key.includes('stickers')) {
+      selections.add('STICKERS');
+    }
   }
 
   for (const field of fields) {
@@ -144,44 +147,46 @@ function getOrderType(payload) {
       labelKey === 'compra' ||
       labelKey === 'tipo de pedido'
     ) {
-      if (Array.isArray(field.value) && Array.isArray(field.options)) {
-        const selectedIds = field.value.map(String);
-
-        for (const option of field.options) {
-          if (selectedIds.includes(String(option.id))) {
-            const mapped = mapOrderText(option.text || option.label || option.value || '');
-            if (mapped) return mapped;
-          }
-        }
-      }
-
-      const mapped = mapOrderText(normalizeFieldValue(field.value));
-      if (mapped) return mapped;
+      addSelectionsFromField(field, addOrderText);
     }
 
     if (
       labelKey.includes('items (') &&
       (field.value === true || field.value === 'true')
     ) {
-      const mapped = mapOrderText(label);
-      if (mapped) return mapped;
+      addOrderText(label);
     }
   }
 
-  return '';
+  for (const key of Object.keys(payload || {})) {
+    const keyName = normalize(key);
+
+    if (
+      keyName === 'items' ||
+      keyName === 'compra' ||
+      keyName === 'tipo de pedido'
+    ) {
+      addOrderText(normalizeFieldValue(payload[key]));
+    }
+  }
+
+  return Array.from(selections);
 }
 
 function getDeliveryMethod(payload) {
   const fields = getAllFields(payload);
+  let delivery = '';
 
-  function mapDeliveryText(text) {
+  function addDeliveryText(text) {
     const key = normalize(text);
 
-    if (key.includes('whatsapp')) return 'WhatsApp';
-    if (key.includes('correo')) return 'Correo';
-    if (key.includes('email')) return 'Correo';
+    if (key.includes('whatsapp')) {
+      delivery = 'WhatsApp';
+    }
 
-    return '';
+    if (key.includes('correo') || key.includes('email')) {
+      delivery = 'Correo';
+    }
   }
 
   for (const field of fields) {
@@ -190,25 +195,68 @@ function getDeliveryMethod(payload) {
 
     if (
       labelKey.includes('como quieres recibir tus stickers') ||
-      labelKey.includes('entrega de stickers')
+      labelKey.includes('entrega de stickers') ||
+      labelKey.includes('recibir tus stickers')
     ) {
-      if (Array.isArray(field.value) && Array.isArray(field.options)) {
-        const selectedIds = field.value.map(String);
-
-        for (const option of field.options) {
-          if (selectedIds.includes(String(option.id))) {
-            const mapped = mapDeliveryText(option.text || option.label || option.value || '');
-            if (mapped) return mapped;
-          }
-        }
-      }
-
-      const mapped = mapDeliveryText(normalizeFieldValue(field.value));
-      if (mapped) return mapped;
+      addSelectionsFromField(field, addDeliveryText);
     }
   }
 
-  return '';
+  return delivery;
+}
+
+function addSelectionsFromField(field, callback) {
+  if (Array.isArray(field.value) && Array.isArray(field.options)) {
+    const selectedValues = field.value.map(function(value) {
+      return String(value);
+    });
+
+    field.options.forEach(function(option) {
+      const optionId = String(option.id || option.value || option.text || option.label || '');
+
+      if (selectedValues.includes(optionId)) {
+        callback(option.text || option.label || option.value || '');
+      }
+    });
+
+    field.value.forEach(function(value) {
+      callback(normalizeFieldValue(value));
+    });
+
+    return;
+  }
+
+  if (Array.isArray(field.value)) {
+    field.value.forEach(function(value) {
+      callback(normalizeFieldValue(value));
+    });
+
+    return;
+  }
+
+  if (field.value && Array.isArray(field.options)) {
+    const selectedValue = String(field.value);
+
+    field.options.forEach(function(option) {
+      const optionId = String(option.id || option.value || option.text || option.label || '');
+
+      if (selectedValue === optionId) {
+        callback(option.text || option.label || option.value || '');
+      }
+    });
+  }
+
+  callback(normalizeFieldValue(field.value));
+}
+
+function getOrderLabel(orderSelections) {
+  const labels = [];
+
+  if (orderSelections.includes('FULL_ALBUM')) labels.push('Álbum Completo');
+  if (orderSelections.includes('SOLO_ALBUM')) labels.push('Solo Álbum');
+  if (orderSelections.includes('STICKERS')) labels.push('Stickers');
+
+  return labels.join(' + ');
 }
 
 function getAllFields(payload) {
