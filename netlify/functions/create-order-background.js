@@ -22,6 +22,8 @@ const PACK_NAMES = [
 ];
 
 exports.handler = async function(event) {
+  let submissionKey = '';
+
   if (event.httpMethod === 'OPTIONS') {
     return jsonResponse(200, { ok: true });
   }
@@ -34,16 +36,29 @@ exports.handler = async function(event) {
     assertEnv();
 
     const payload = JSON.parse(event.body || '{}');
-    const submissionKey = getSubmissionKey(payload);
+    submissionKey = getSubmissionKey(payload);
 
     const firstName = getValue(payload, ['Name', 'Nombre', 'First name', 'First Name']);
     const lastName = getValue(payload, ['Last Name', 'Apellido', 'Apellidos']);
-    const email = getValue(payload, ['Correo', 'Correo electrónico', 'Email', 'Correo Electronico']);
+    const email = getEmailValue(payload);
     const orderSelections = getOrderSelections(payload);
     const deliveryMethod = getDeliveryMethod(payload);
 
     if (!email) throw new Error('Missing email');
     if (orderSelections.length === 0) throw new Error('Missing order type');
+
+    const shouldProcess = await reserveSubmissionProcessing({
+      submissionKey,
+      email
+    });
+
+    if (!shouldProcess) {
+      return jsonResponse(200, {
+        ok: true,
+        skipped: true,
+        reason: 'submission_already_processed_or_processing'
+      });
+    }
 
     const hasFullAlbum = orderSelections.includes('FULL_ALBUM');
     const hasSoloAlbum = orderSelections.includes('SOLO_ALBUM');
@@ -110,6 +125,8 @@ exports.handler = async function(event) {
       }
     }
 
+    await markSubmissionProcessed(submissionKey);
+
     return jsonResponse(200, {
       ok: true,
       albumLink,
@@ -118,6 +135,11 @@ exports.handler = async function(event) {
     });
   } catch (error) {
     console.error(error);
+
+    if (submissionKey) {
+      await markSubmissionError(submissionKey, error.message || 'Unknown error');
+    }
+
     return jsonResponse(500, { error: error.message || 'Unknown error' });
   }
 };
@@ -148,6 +170,85 @@ function getSubmissionKey(payload) {
     .createHash('sha256')
     .update(JSON.stringify(payload))
     .digest('hex');
+}
+
+async function reserveSubmissionProcessing({ submissionKey, email }) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/processed_submissions`, {
+    method: 'POST',
+    headers: supabaseHeaders(),
+    body: JSON.stringify({
+      submission_key: submissionKey,
+      email,
+      status: 'processing',
+      updated_at: new Date().toISOString()
+    })
+  });
+
+  const text = await response.text();
+
+  if (response.status === 409) {
+    return false;
+  }
+
+  if (!response.ok) {
+    throw new Error(`Submission lock failed: ${text}`);
+  }
+
+  return true;
+}
+
+async function markSubmissionProcessed(submissionKey) {
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/processed_submissions?submission_key=eq.${encodeURIComponent(submissionKey)}`,
+    {
+      method: 'PATCH',
+      headers: supabaseHeaders(),
+      body: JSON.stringify({
+        status: 'processed',
+        updated_at: new Date().toISOString()
+      })
+    }
+  );
+
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`Submission processed update failed: ${text}`);
+  }
+}
+
+async function markSubmissionError(submissionKey, message) {
+  await fetch(
+    `${SUPABASE_URL}/rest/v1/processed_submissions?submission_key=eq.${encodeURIComponent(submissionKey)}`,
+    {
+      method: 'PATCH',
+      headers: supabaseHeaders(),
+      body: JSON.stringify({
+        status: 'error: ' + String(message).slice(0, 200),
+        updated_at: new Date().toISOString()
+      })
+    }
+  );
+}
+
+function getEmailValue(payload) {
+  const fields = getAllFields(payload);
+
+  for (const field of fields) {
+    const label = normalize(field.label || field.title || field.name || '');
+    const type = normalize(field.type || '');
+
+    if (
+      type.includes('email') ||
+      label === 'correo' ||
+      label === 'email' ||
+      label.includes('correo electronico')
+    ) {
+      return normalizeFieldValue(field.value ?? field.answer ?? field.email ?? '').trim();
+    }
+  }
+
+  return getValue(payload, ['Correo', 'Correo electrónico', 'Email', 'Correo Electronico']).trim();
 }
 
 function getOrderSelections(payload) {
