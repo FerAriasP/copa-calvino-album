@@ -37,7 +37,7 @@ exports.handler = async function(event) {
     const lastName = getValue(payload, ['Last Name', 'Apellido', 'Apellidos']);
     const email = getValue(payload, ['Correo', 'Correo electrónico', 'Email', 'Correo Electronico']);
     const order = getOrderType(payload);
-    const deliveryMethod = getValue(payload, ['¿Cómo quieres recibir tus stickers?', 'Como quieres recibir tus stickers?', 'Entrega de stickers']);
+    const deliveryMethod = getDeliveryMethod(payload);
 
     if (!email) throw new Error('Missing email');
     if (!order) throw new Error('Missing order type');
@@ -120,30 +120,91 @@ function assertEnv() {
 }
 
 function getOrderType(payload) {
-  const directOrder = getValue(payload, ['Compra', 'Tipo de pedido', 'Items', 'Items Buyed']);
-
-  if (directOrder) {
-    const directKey = normalize(directOrder);
-
-    if (directKey.includes('album completo')) return 'Álbum Completo';
-    if (directKey.includes('album lleno')) return 'Álbum Completo';
-    if (directKey.includes('solo album')) return 'Solo Álbum';
-    if (directKey.includes('album solo')) return 'Solo Álbum';
-    if (directKey.includes('solo stickers')) return 'Stickers';
-    if (directKey.includes('stickers')) return 'Stickers';
-  }
-
   const fields = getAllFields(payload);
+
+  function mapOrderText(text) {
+    const key = normalize(text);
+
+    if (key.includes('album completo')) return 'Álbum Completo';
+    if (key.includes('album lleno')) return 'Álbum Completo';
+    if (key.includes('solo album')) return 'Solo Álbum';
+    if (key.includes('album solo')) return 'Solo Álbum';
+    if (key.includes('solo stickers')) return 'Stickers';
+    if (key.includes('stickers')) return 'Stickers';
+
+    return '';
+  }
 
   for (const field of fields) {
     const label = String(field.label || field.title || field.name || '').trim();
-    const value = field.value;
+    const labelKey = normalize(label);
 
-    if (value === true && label.includes('Items (')) {
-      if (normalize(label).includes('album completo')) return 'Álbum Completo';
-      if (normalize(label).includes('solo album')) return 'Solo Álbum';
-      if (normalize(label).includes('solo stickers')) return 'Stickers';
-      if (normalize(label).includes('stickers')) return 'Stickers';
+    if (
+      labelKey === 'items' ||
+      labelKey === 'compra' ||
+      labelKey === 'tipo de pedido'
+    ) {
+      if (Array.isArray(field.value) && Array.isArray(field.options)) {
+        const selectedIds = field.value.map(String);
+
+        for (const option of field.options) {
+          if (selectedIds.includes(String(option.id))) {
+            const mapped = mapOrderText(option.text || option.label || option.value || '');
+            if (mapped) return mapped;
+          }
+        }
+      }
+
+      const mapped = mapOrderText(normalizeFieldValue(field.value));
+      if (mapped) return mapped;
+    }
+
+    if (
+      labelKey.includes('items (') &&
+      (field.value === true || field.value === 'true')
+    ) {
+      const mapped = mapOrderText(label);
+      if (mapped) return mapped;
+    }
+  }
+
+  return '';
+}
+
+function getDeliveryMethod(payload) {
+  const fields = getAllFields(payload);
+
+  function mapDeliveryText(text) {
+    const key = normalize(text);
+
+    if (key.includes('whatsapp')) return 'WhatsApp';
+    if (key.includes('correo')) return 'Correo';
+    if (key.includes('email')) return 'Correo';
+
+    return '';
+  }
+
+  for (const field of fields) {
+    const label = String(field.label || field.title || field.name || '').trim();
+    const labelKey = normalize(label);
+
+    if (
+      labelKey.includes('como quieres recibir tus stickers') ||
+      labelKey.includes('entrega de stickers')
+    ) {
+      if (Array.isArray(field.value) && Array.isArray(field.options)) {
+        const selectedIds = field.value.map(String);
+
+        for (const option of field.options) {
+          if (selectedIds.includes(String(option.id))) {
+            const mapped = mapDeliveryText(option.text || option.label || option.value || '');
+            if (mapped) return mapped;
+          }
+        }
+      }
+
+      const mapped = mapDeliveryText(normalizeFieldValue(field.value));
+      if (mapped) return mapped;
     }
   }
 
